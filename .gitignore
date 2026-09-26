@@ -19,8 +19,6 @@ __pycache__/
 .ipynb_checkpoints/
 
 # Large ML files
-dataset.csv
-model.pkl
 columns.pkl
 
 # Uploaded files
