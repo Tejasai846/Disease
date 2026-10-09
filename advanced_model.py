@@ -2,13 +2,12 @@
 Advanced Disease Diagnosis Model
 Implements Decision Tree, Bagging, Boosting, and Hybrid Ensemble Methods.
 
-AGGRESSIVE MEMORY OPTIMIZATION FOR LARGE DATASETS
-- Very shallow trees (max_depth=3-4) to prevent exponential memory growth
-- Reduced estimator counts
-- Mandatory sequential processing (n_jobs=1)
-- Aggressive min_samples constraints
+This version is intentionally conservative to avoid memory-related crashes on
+large datasets with many classes. It removes the unstable BaggingClassifier
+path and uses shallow trees with strong regularization.
 """
 
+import os
 import pandas as pd
 import numpy as np
 import pickle
@@ -23,7 +22,6 @@ from sklearn.ensemble import (
     RandomForestClassifier,
     GradientBoostingClassifier,
     AdaBoostClassifier,
-    BaggingClassifier,
     VotingClassifier
 )
 
@@ -38,6 +36,10 @@ from sklearn.metrics import (
 )
 
 warnings.filterwarnings("ignore")
+
+# Prevent sklearn from spawning too many workers
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 
 # ==========================================================
@@ -94,20 +96,13 @@ class DiseasePredictor:
         print("Dataset shape:", data.shape)
         print("Columns:", len(data.columns))
 
-        # Remove duplicate column names.
+        # Remove duplicate columns and rows.
         data = data.loc[:, ~data.columns.duplicated()].copy()
-
-        # Remove duplicate rows.
         initial_rows = len(data)
-
         data = data.drop_duplicates().reset_index(drop=True)
+        print("Duplicate rows removed:", initial_rows - len(data))
 
-        print(
-            "Duplicate rows removed:",
-            initial_rows - len(data)
-        )
-
-        # Identify the target column.
+        # Identify target column.
         target_candidates = [
             col for col in data.columns
             if any(
@@ -128,84 +123,44 @@ class DiseasePredictor:
             )
 
         self.target_col = target_candidates[0]
-
         print("Target column:", self.target_col)
 
         # Remove rows without a target.
-        data = data.dropna(
-            subset=[self.target_col]
-        ).copy()
-
+        data = data.dropna(subset=[self.target_col]).copy()
         if data.empty:
-            raise ValueError(
-                "No valid target values are available."
-            )
+            raise ValueError("No valid target values are available.")
 
-        # Separate features and target.
-        X = data.drop(
-            columns=[self.target_col]
-        ).copy()
-
+        X = data.drop(columns=[self.target_col]).copy()
         y = data[self.target_col].astype(str)
 
-        # Handle missing values and categorical features.
+        # Handle missing values.
         for col in X.columns:
-
             if pd.api.types.is_numeric_dtype(X[col]):
-
-                X[col] = pd.to_numeric(
-                    X[col],
-                    errors="coerce"
-                )
-
-                median_value = X[col].median()
-
-                if pd.isna(median_value):
-                    median_value = 0
-
-                X[col] = X[col].fillna(
-                    median_value
-                )
-
+                X[col] = pd.to_numeric(X[col], errors="coerce")
+                med = X[col].median()
+                if pd.isna(med):
+                    med = 0
+                X[col] = X[col].fillna(med)
             else:
+                X[col] = X[col].fillna("Unknown").astype(str)
 
-                X[col] = X[col].fillna(
-                    "Unknown"
-                ).astype(str)
-
-        # Convert categorical feature columns to numeric columns.
         X = pd.get_dummies(X)
-
-        # Handle infinite or missing values.
-        X = X.replace(
-            [np.inf, -np.inf],
-            np.nan
-        ).fillna(0)
+        X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
 
         self.column_names = X.columns.tolist()
-
-        # Encode disease names into numerical labels.
         y = self.label_encoder.fit_transform(y)
 
         print("\nDataset Statistics")
         print("------------------")
         print("Total samples:", X.shape[0])
         print("Total features:", X.shape[1])
-
-        print(
-            "Disease classes:",
-            len(self.label_encoder.classes_)
-        )
+        print("Disease classes:", len(self.label_encoder.classes_))
 
         if len(self.label_encoder.classes_) < 2:
-            raise ValueError(
-                "At least two target classes are required."
-            )
+            raise ValueError("At least two target classes are required.")
 
         if X.shape[1] == 0:
-            raise ValueError(
-                "No usable feature columns found."
-            )
+            raise ValueError("No usable feature columns found.")
 
         return X, y
 
@@ -213,35 +168,24 @@ class DiseasePredictor:
     # SPLIT DATA
     # ======================================================
 
-    def split_data(
-        self,
-        X,
-        y,
-        test_size=0.2,
-        random_state=42
-    ):
+    def split_data(self, X, y, test_size=0.2, random_state=42):
 
-        # Stratify when every class has at least two samples.
         class_counts = pd.Series(y).value_counts()
-
         stratify_value = (
-            y
-            if len(class_counts) > 1
-            and class_counts.min() >= 2
-            else None
+            y if len(class_counts) > 1 and class_counts.min() >= 2 else None
         )
 
         (
             self.X_train,
             self.X_test,
             self.y_train,
-            self.y_test
+            self.y_test,
         ) = train_test_split(
             X,
             y,
             test_size=test_size,
             random_state=random_state,
-            stratify=stratify_value
+            stratify=stratify_value,
         )
 
         print("\nTraining samples:", len(self.X_train))
@@ -252,22 +196,17 @@ class DiseasePredictor:
     # ======================================================
 
     def train_decision_tree(self):
-
         print("\nTraining Decision Tree...")
 
         model = DecisionTreeClassifier(
             random_state=42,
             max_depth=3,
-            min_samples_split=20,
-            min_samples_leaf=10,
-            class_weight="balanced"
+            min_samples_split=50,
+            min_samples_leaf=20,
+            class_weight="balanced",
         )
 
-        model.fit(
-            self.X_train,
-            self.y_train
-        )
-
+        model.fit(self.X_train, self.y_train)
         self.models["Decision Tree"] = model
         print("✓ Decision Tree training complete")
 
@@ -276,142 +215,60 @@ class DiseasePredictor:
     # ======================================================
 
     def train_bagging_models(self):
-
         print("\nTraining Bagging Models...")
 
-        # Random Forest
         print("Training Random Forest...")
-
         rf = RandomForestClassifier(
-            n_estimators=20,
-            max_depth=3,
-            min_samples_split=20,
-            min_samples_leaf=10,
+            n_estimators=10,
+            max_depth=2,
+            min_samples_split=50,
+            min_samples_leaf=20,
             random_state=42,
             n_jobs=1,
-            class_weight="balanced"
+            class_weight="balanced",
         )
-
-        rf.fit(
-            self.X_train,
-            self.y_train
-        )
-
+        rf.fit(self.X_train, self.y_train)
         self.models["Random Forest"] = rf
         print("✓ Random Forest training complete")
 
-        # Bagging Classifier
-        print("Training Bagging Classifier...")
-
-        # Support both new and older scikit-learn versions.
-        try:
-
-            bagging = BaggingClassifier(
-                estimator=DecisionTreeClassifier(
-                    max_depth=3,
-                    min_samples_split=20,
-                    min_samples_leaf=10,
-                    random_state=42
-                ),
-                n_estimators=20,
-                random_state=42,
-                n_jobs=1,
-                max_samples=0.6,
-                max_features=0.6,
-                bootstrap=True
-            )
-
-        except TypeError:
-
-            bagging = BaggingClassifier(
-                base_estimator=DecisionTreeClassifier(
-                    max_depth=3,
-                    min_samples_split=20,
-                    min_samples_leaf=10,
-                    random_state=42
-                ),
-                n_estimators=20,
-                random_state=42,
-                n_jobs=1,
-                max_samples=0.6,
-                max_features=0.6,
-                bootstrap=True
-            )
-
-        bagging.fit(
-            self.X_train,
-            self.y_train
-        )
-
-        self.models["Bagging"] = bagging
-        print("✓ Bagging Classifier training complete")
+        # IMPORTANT: BaggingClassifier is intentionally skipped because it
+        # triggers excessive memory use due to tree serialization in this dataset.
+        print("Skipping BaggingClassifier to avoid tree serialization memory errors.")
 
     # ======================================================
     # BOOSTING MODELS
     # ======================================================
 
     def train_boosting_models(self):
-
         print("\nTraining Boosting Models...")
 
-        # AdaBoost
         print("Training AdaBoost...")
-
-        try:
-
-            ada = AdaBoostClassifier(
-                estimator=DecisionTreeClassifier(
-                    max_depth=2,
-                    min_samples_split=20,
-                    min_samples_leaf=10,
-                    random_state=42
-                ),
-                n_estimators=20,
-                learning_rate=0.5,
-                random_state=42
-            )
-
-        except TypeError:
-
-            ada = AdaBoostClassifier(
-                base_estimator=DecisionTreeClassifier(
-                    max_depth=2,
-                    min_samples_split=20,
-                    min_samples_leaf=10,
-                    random_state=42
-                ),
-                n_estimators=20,
-                learning_rate=0.5,
-                random_state=42
-            )
-
-        ada.fit(
-            self.X_train,
-            self.y_train
+        ada = AdaBoostClassifier(
+            estimator=DecisionTreeClassifier(
+                max_depth=2,
+                min_samples_split=50,
+                min_samples_leaf=20,
+                random_state=42,
+            ),
+            n_estimators=10,
+            learning_rate=0.5,
+            random_state=42,
         )
-
+        ada.fit(self.X_train, self.y_train)
         self.models["AdaBoost"] = ada
         print("✓ AdaBoost training complete")
 
-        # Gradient Boosting
         print("Training Gradient Boosting...")
-
         gb = GradientBoostingClassifier(
-            n_estimators=20,
+            n_estimators=10,
             learning_rate=0.1,
             max_depth=2,
-            min_samples_split=20,
-            min_samples_leaf=10,
+            min_samples_split=50,
+            min_samples_leaf=20,
             random_state=42,
-            subsample=0.6,
-            max_features=0.6
+            subsample=0.5,
         )
-
-        gb.fit(
-            self.X_train,
-            self.y_train
-        )
-
+        gb.fit(self.X_train, self.y_train)
         self.models["Gradient Boosting"] = gb
         print("✓ Gradient Boosting training complete")
 
@@ -420,7 +277,6 @@ class DiseasePredictor:
     # ======================================================
 
     def train_voting_ensemble(self):
-
         print("\nTraining Voting Ensemble...")
 
         voting_model = VotingClassifier(
@@ -428,42 +284,46 @@ class DiseasePredictor:
                 (
                     "rf",
                     RandomForestClassifier(
-                        n_estimators=15,
-                        max_depth=3,
-                        min_samples_split=20,
-                        min_samples_leaf=10,
+                        n_estimators=10,
+                        max_depth=2,
+                        min_samples_split=50,
+                        min_samples_leaf=20,
                         random_state=42,
-                        n_jobs=1
-                    )
+                        n_jobs=1,
+                        class_weight="balanced",
+                    ),
                 ),
                 (
                     "gb",
                     GradientBoostingClassifier(
-                        n_estimators=15,
+                        n_estimators=10,
+                        learning_rate=0.1,
                         max_depth=2,
-                        min_samples_split=20,
-                        min_samples_leaf=10,
+                        min_samples_split=50,
+                        min_samples_leaf=20,
                         random_state=42,
-                        subsample=0.6
-                    )
+                        subsample=0.5,
+                    ),
                 ),
                 (
                     "ada",
                     AdaBoostClassifier(
-                        n_estimators=15,
+                        estimator=DecisionTreeClassifier(
+                            max_depth=2,
+                            min_samples_split=50,
+                            min_samples_leaf=20,
+                            random_state=42,
+                        ),
+                        n_estimators=10,
                         learning_rate=0.5,
-                        random_state=42
-                    )
-                )
+                        random_state=42,
+                    ),
+                ),
             ],
-            voting="soft"
+            voting="soft",
         )
 
-        voting_model.fit(
-            self.X_train,
-            self.y_train
-        )
-
+        voting_model.fit(self.X_train, self.y_train)
         self.models["Voting Ensemble"] = voting_model
         print("✓ Voting Ensemble training complete")
 
@@ -480,105 +340,69 @@ class DiseasePredictor:
 
         results = {}
 
-        target_names = [
-            str(name)
-            for name in self.label_encoder.classes_
-        ]
-
-        labels = np.arange(
-            len(target_names)
-        )
+        target_names = [str(name) for name in self.label_encoder.classes_]
+        labels = np.arange(len(target_names))
 
         for model_name, model in self.models.items():
-
             print("\n" + "-" * 65)
             print("Model:", model_name)
             print("-" * 65)
 
-            # Predictions
-            y_pred = model.predict(
-                self.X_test
-            )
+            y_pred = model.predict(self.X_test)
 
-            # Performance metrics
-            accuracy = accuracy_score(
-                self.y_test,
-                y_pred
-            )
-
+            accuracy = accuracy_score(self.y_test, y_pred)
             precision = precision_score(
                 self.y_test,
                 y_pred,
                 average="weighted",
-                zero_division=0
+                zero_division=0,
             )
-
             recall = recall_score(
                 self.y_test,
                 y_pred,
                 average="weighted",
-                zero_division=0
+                zero_division=0,
             )
-
             f1 = f1_score(
                 self.y_test,
                 y_pred,
                 average="weighted",
-                zero_division=0
+                zero_division=0,
             )
 
             results[model_name] = {
                 "accuracy": accuracy,
                 "precision": precision,
                 "recall": recall,
-                "f1": f1
+                "f1": f1,
             }
 
+            print(f"Accuracy:  {accuracy:.4f} ({accuracy * 100:.2f}%)")
+            print(f"Precision: {precision:.4f}")
+            print(f"Recall:    {recall:.4f}")
+            print(f"F1-Score:  {f1:.4f}")
+
+            print("\nClassification Report (first 10 classes):")
             print(
-                f"Accuracy:  {accuracy:.4f} "
-                f"({accuracy * 100:.2f}%)"
+                classification_report(
+                    self.y_test,
+                    y_pred,
+                    labels=labels[:10],
+                    target_names=target_names[:10],
+                    zero_division=0,
+                )
             )
 
-            print(
-                f"Precision: {precision:.4f}"
-            )
-
-            print(
-                f"Recall:    {recall:.4f}"
-            )
-
-            print(
-                f"F1-Score:  {f1:.4f}"
-            )
-
-        # Summary table
-        results_df = pd.DataFrame(
-            results
-        ).T
-
-        results_df = results_df.sort_values(
-            by="accuracy",
-            ascending=False
-        )
+        results_df = pd.DataFrame(results).T
+        results_df = results_df.sort_values(by="accuracy", ascending=False)
 
         print("\n")
         print("=" * 75)
         print("SUMMARY COMPARISON")
         print("=" * 75)
+        print(results_df.to_string(float_format=lambda value: f"{value:.4f}"))
 
-        print(
-            results_df.to_string(
-                float_format=lambda value: f"{value:.4f}"
-            )
-        )
-
-        best_model_name = results_df.index[0]
-
-        print(
-            "\nBest Model by Accuracy:",
-            best_model_name
-        )
-
+        print("\nBest Model by Accuracy:", results_df.index[0])
         return results_df
 
     # ======================================================
@@ -586,14 +410,8 @@ class DiseasePredictor:
     # ======================================================
 
     def save_best_model(self, results_df):
-
-        best_model_name = (
-            results_df["accuracy"].idxmax()
-        )
-
-        best_model = self.models[
-            best_model_name
-        ]
+        best_model_name = results_df["accuracy"].idxmax()
+        best_model = self.models[best_model_name]
 
         print("\nSaving best model...")
 
@@ -602,43 +420,25 @@ class DiseasePredictor:
         encoder_path = BASE_DIR / "label_encoder.pkl"
         metadata_path = BASE_DIR / "model_metadata.pkl"
 
-        # Save trained model.
         with open(model_path, "wb") as file:
+            pickle.dump(best_model, file)
 
-            pickle.dump(
-                best_model,
-                file
-            )
-
-        # Save feature column names.
         with open(columns_path, "wb") as file:
+            pickle.dump(self.column_names, file)
 
-            pickle.dump(
-                self.column_names,
-                file
-            )
-
-        # Save disease label encoder.
         with open(encoder_path, "wb") as file:
+            pickle.dump(self.label_encoder, file)
 
-            pickle.dump(
-                self.label_encoder,
-                file
-            )
-
-        # Save metadata.
         with open(metadata_path, "wb") as file:
-
             pickle.dump(
                 {
                     "best_model_name": best_model_name,
-                    "target_column": self.target_col
+                    "target_column": self.target_col,
                 },
-                file
+                file,
             )
 
         print("Best model:", best_model_name)
-
         print("Saved:", model_path)
         print("Saved:", columns_path)
         print("Saved:", encoder_path)
@@ -657,63 +457,38 @@ def main():
     print("=" * 75)
     print("ADVANCED DISEASE DIAGNOSIS SYSTEM")
     print("=" * 75)
-    print("AGGRESSIVE MEMORY OPTIMIZATION - Shallow trees, serial processing")
+    print("Memory-safe training configuration")
     print("=" * 75)
 
     predictor = DiseasePredictor()
 
     try:
+        X, y = predictor.load_and_preprocess_data(DATASET_PATH)
+        predictor.split_data(X, y)
 
-        # Load dataset.
-        X, y = predictor.load_and_preprocess_data(
-            DATASET_PATH
-        )
-
-        # Split dataset.
-        predictor.split_data(
-            X,
-            y
-        )
-
-        # Train models.
         predictor.train_decision_tree()
-
         predictor.train_bagging_models()
-
         predictor.train_boosting_models()
-
         predictor.train_voting_ensemble()
 
-        # Evaluate models.
         results_df = predictor.evaluate_models()
-
-        # Save best model.
-        predictor.save_best_model(
-            results_df
-        )
+        predictor.save_best_model(results_df)
 
     except (
         FileNotFoundError,
         ValueError,
         pd.errors.ParserError,
-        MemoryError
+        MemoryError,
     ) as error:
-
         print("\nERROR:", error)
-
         return
 
     print("\n")
     print("=" * 75)
     print("TRAINING COMPLETE!")
     print("=" * 75)
-
-    print(
-        "Note: This is an educational model, "
-        "not a clinically validated diagnostic system."
-    )
+    print("This is an educational model, not a clinically validated diagnostic system.")
 
 
 if __name__ == "__main__":
-
     main()
