@@ -2,11 +2,11 @@
 Advanced Disease Diagnosis Model
 Implements Decision Tree, Bagging, Boosting, and Hybrid Ensemble Methods.
 
-MEMORY-OPTIMIZED FOR LARGE DATASETS (189K+ samples, 377 features, 773 classes)
-Key fixes:
-- Disabled parallel processing (n_jobs=1) to prevent memory serialization errors
-- Reduced estimators and max_depth to lower memory footprint
-- Added subsampling and feature sampling for efficiency
+AGGRESSIVE MEMORY OPTIMIZATION FOR LARGE DATASETS
+- Very shallow trees (max_depth=3-4) to prevent exponential memory growth
+- Reduced estimator counts
+- Mandatory sequential processing (n_jobs=1)
+- Aggressive min_samples constraints
 """
 
 import pandas as pd
@@ -257,9 +257,9 @@ class DiseasePredictor:
 
         model = DecisionTreeClassifier(
             random_state=42,
-            max_depth=10,
-            min_samples_split=5,
-            min_samples_leaf=2,
+            max_depth=3,
+            min_samples_split=20,
+            min_samples_leaf=10,
             class_weight="balanced"
         )
 
@@ -283,10 +283,10 @@ class DiseasePredictor:
         print("Training Random Forest...")
 
         rf = RandomForestClassifier(
-            n_estimators=50,
-            max_depth=10,
-            min_samples_split=5,
-            min_samples_leaf=2,
+            n_estimators=20,
+            max_depth=3,
+            min_samples_split=20,
+            min_samples_leaf=10,
             random_state=42,
             n_jobs=1,
             class_weight="balanced"
@@ -308,16 +308,16 @@ class DiseasePredictor:
 
             bagging = BaggingClassifier(
                 estimator=DecisionTreeClassifier(
-                    max_depth=8,
-                    min_samples_split=5,
-                    min_samples_leaf=2,
+                    max_depth=3,
+                    min_samples_split=20,
+                    min_samples_leaf=10,
                     random_state=42
                 ),
-                n_estimators=30,
+                n_estimators=20,
                 random_state=42,
                 n_jobs=1,
-                max_samples=0.7,
-                max_features=0.7,
+                max_samples=0.6,
+                max_features=0.6,
                 bootstrap=True
             )
 
@@ -325,16 +325,16 @@ class DiseasePredictor:
 
             bagging = BaggingClassifier(
                 base_estimator=DecisionTreeClassifier(
-                    max_depth=8,
-                    min_samples_split=5,
-                    min_samples_leaf=2,
+                    max_depth=3,
+                    min_samples_split=20,
+                    min_samples_leaf=10,
                     random_state=42
                 ),
-                n_estimators=30,
+                n_estimators=20,
                 random_state=42,
                 n_jobs=1,
-                max_samples=0.7,
-                max_features=0.7,
+                max_samples=0.6,
+                max_features=0.6,
                 bootstrap=True
             )
 
@@ -361,12 +361,12 @@ class DiseasePredictor:
 
             ada = AdaBoostClassifier(
                 estimator=DecisionTreeClassifier(
-                    max_depth=3,
-                    min_samples_split=5,
-                    min_samples_leaf=2,
+                    max_depth=2,
+                    min_samples_split=20,
+                    min_samples_leaf=10,
                     random_state=42
                 ),
-                n_estimators=50,
+                n_estimators=20,
                 learning_rate=0.5,
                 random_state=42
             )
@@ -375,12 +375,12 @@ class DiseasePredictor:
 
             ada = AdaBoostClassifier(
                 base_estimator=DecisionTreeClassifier(
-                    max_depth=3,
-                    min_samples_split=5,
-                    min_samples_leaf=2,
+                    max_depth=2,
+                    min_samples_split=20,
+                    min_samples_leaf=10,
                     random_state=42
                 ),
-                n_estimators=50,
+                n_estimators=20,
                 learning_rate=0.5,
                 random_state=42
             )
@@ -397,14 +397,14 @@ class DiseasePredictor:
         print("Training Gradient Boosting...")
 
         gb = GradientBoostingClassifier(
-            n_estimators=50,
+            n_estimators=20,
             learning_rate=0.1,
-            max_depth=3,
-            min_samples_split=5,
-            min_samples_leaf=2,
+            max_depth=2,
+            min_samples_split=20,
+            min_samples_leaf=10,
             random_state=42,
-            subsample=0.7,
-            max_features=0.7
+            subsample=0.6,
+            max_features=0.6
         )
 
         gb.fit(
@@ -428,10 +428,10 @@ class DiseasePredictor:
                 (
                     "rf",
                     RandomForestClassifier(
-                        n_estimators=30,
-                        max_depth=10,
-                        min_samples_split=5,
-                        min_samples_leaf=2,
+                        n_estimators=15,
+                        max_depth=3,
+                        min_samples_split=20,
+                        min_samples_leaf=10,
                         random_state=42,
                         n_jobs=1
                     )
@@ -439,18 +439,18 @@ class DiseasePredictor:
                 (
                     "gb",
                     GradientBoostingClassifier(
-                        n_estimators=30,
-                        max_depth=3,
-                        min_samples_split=5,
-                        min_samples_leaf=2,
+                        n_estimators=15,
+                        max_depth=2,
+                        min_samples_split=20,
+                        min_samples_leaf=10,
                         random_state=42,
-                        subsample=0.7
+                        subsample=0.6
                     )
                 ),
                 (
                     "ada",
                     AdaBoostClassifier(
-                        n_estimators=30,
+                        n_estimators=15,
                         learning_rate=0.5,
                         random_state=42
                     )
@@ -549,18 +549,6 @@ class DiseasePredictor:
 
             print(
                 f"F1-Score:  {f1:.4f}"
-            )
-
-            print("\nClassification Report (sample):")
-            # Only show first 10 classes to avoid clutter
-            print(
-                classification_report(
-                    self.y_test,
-                    y_pred,
-                    labels=labels[:10],
-                    target_names=target_names[:10],
-                    zero_division=0
-                )
             )
 
         # Summary table
@@ -669,7 +657,7 @@ def main():
     print("=" * 75)
     print("ADVANCED DISEASE DIAGNOSIS SYSTEM")
     print("=" * 75)
-    print("Memory-optimized for large datasets")
+    print("AGGRESSIVE MEMORY OPTIMIZATION - Shallow trees, serial processing")
     print("=" * 75)
 
     predictor = DiseasePredictor()
